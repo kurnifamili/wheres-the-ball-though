@@ -1,9 +1,4 @@
 # Where's The Ball - AI-Powered Multiplayer Game
-
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 A multiplayer "Where's Waldo" style game powered by AI image generation and ball detection. Players compete to find a hidden red ball in complex Singaporean hawker centre scenes.
 
 ## 🎮 Features
@@ -204,8 +199,7 @@ If automated deployment fails:
 
 - **Supabase**: Free tier includes Edge Functions
 - **Vercel**: Free tier for frontend hosting  
-- **APIs**: Pay per usage (Gemini, fal.ai, ElevenLabs)
-- **Estimated**: Very low cost for typical usage
+- **APIs**: Pay per usage (Gemini, fal.ai, ElevenLabs)- **Estimated**: Very low cost for typical usage
 
 ## 🎉 Success!
 
