@@ -1,0 +1,5 @@
+{
+  "name": "Where's The Ball, Though?",
+  "description": "A responsive, real-time multiplayer game prototype where players compete to find the hidden ball in a series of AI-generated images. Features a game-show aesthetic, leaderboard, and full-screen mode for immersive gameplay.",
+  "requestFramePermissions": []
+}

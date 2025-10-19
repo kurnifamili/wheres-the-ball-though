@@ -1,0 +1,4 @@
+-- Add rounds configuration to rooms table
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS total_rounds INTEGER DEFAULT 5;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS current_round INTEGER DEFAULT 0;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_completed BOOLEAN DEFAULT FALSE;
