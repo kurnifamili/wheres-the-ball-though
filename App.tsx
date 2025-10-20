@@ -69,6 +69,8 @@ const App: React.FC = () => {
   const [urlPin, setUrlPin] = useState<string | null>(null);
   const [gameStarted, setGameStarted] = useState(false);
   const [roomPlayers, setRoomPlayers] = useState<Array<{name: string, joined_at: string}>>([]);
+  const [isHost, setIsHost] = useState<boolean>(false);
+  const [hostPlayerName, setHostPlayerName] = useState<string | null>(null);
   const [recentScorer, setRecentScorer] = useState<string | null>(null);
   const [showNotification, setShowNotification] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -242,10 +244,10 @@ const App: React.FC = () => {
 
   const joinRoom = async (pin: string, playerName: string) => {
     try {
-      // Find room
+      // Find room and check if game has started
       const { data: room, error: roomError } = await supabase
         .from('rooms')
-        .select('id')
+        .select('id, game_started')
         .eq('pin_code', pin)
         .eq('is_active', true)
         .single();
@@ -254,13 +256,21 @@ const App: React.FC = () => {
         throw new Error('Room not found');
       }
 
-      // Add player to room
+      // Check if game has already started
+      if (room.game_started) {
+        throw new Error('Game has already started. Please wait for the next game or create a new room.');
+      }
+
+      // Add player to room (upsert to handle rejoining)
       const { error: playerError } = await supabase
         .from('room_players')
-        .insert({ 
+        .upsert({ 
           room_id: room.id, 
           player_name: playerName,
-          score: 0
+          score: 0,
+          joined_at: new Date().toISOString()
+        }, {
+          onConflict: 'room_id,player_name'
         });
 
       if (playerError) throw playerError;
@@ -338,7 +348,7 @@ const App: React.FC = () => {
     try {
       const { data: room } = await supabase
         .from('rooms')
-        .select('id, total_rounds, current_round, game_completed')
+        .select('id, total_rounds, current_round, game_completed, game_started, host_player_name')
         .eq('pin_code', pin)
         .single();
 
@@ -355,6 +365,18 @@ const App: React.FC = () => {
         console.log(`Database round ${dbRound} is not higher than UI round ${currentRound}, keeping UI state`);
       }
       setGameCompleted(room.game_completed || false);
+      
+      // Update host status
+      setIsHost(room.host_player_name === playerName);
+      setHostPlayerName(room.host_player_name);
+      console.log('Host status updated:', { host_player_name: room.host_player_name, playerName, isHost: room.host_player_name === playerName });
+      
+      // Update game started status from database
+      if (room.game_started && !gameStarted) {
+        console.log('Game already started in database, but player should not join mid-game');
+        // Don't automatically start the game for players joining mid-game
+        // They should be prevented from joining in the first place
+      }
 
       const { data: players, error } = await supabase
         .from('room_players')
@@ -381,8 +403,27 @@ const App: React.FC = () => {
     }
   };
 
-  const startGameplay = () => {
+  const startGameplay = async () => {
     setGameStarted(true);
+    
+    // Update database to notify other players
+    if (isMultiplayer && roomPin) {
+      try {
+        const { error } = await supabase
+          .from('rooms')
+          .update({ game_started: true })
+          .eq('pin_code', roomPin);
+        
+        if (error) {
+          console.error('Failed to update game started status:', error);
+        } else {
+          console.log('Game started status updated in database');
+        }
+      } catch (error) {
+        console.error('Error updating game started status:', error);
+      }
+    }
+    
     startCountdown();
   };
 
@@ -408,12 +449,79 @@ const App: React.FC = () => {
     }, 1000);
   };
 
-  const leaveRoom = () => {
+  const leaveRoom = async () => {
+    // Remove player from database if in multiplayer mode
+    if (isMultiplayer && roomPin && playerName) {
+      try {
+        // First get the room ID
+        const { data: room } = await supabase
+          .from('rooms')
+          .select('id')
+          .eq('pin_code', roomPin)
+          .single();
+
+        if (room) {
+          // Check if this is the host leaving
+          const { data: roomData } = await supabase
+            .from('rooms')
+            .select('host_player_name')
+            .eq('pin_code', roomPin)
+            .single();
+
+          const isHostLeaving = roomData?.host_player_name === playerName;
+
+          // Remove player from room_players table
+          const { error } = await supabase
+            .from('room_players')
+            .delete()
+            .eq('room_id', room.id)
+            .eq('player_name', playerName);
+
+          if (error) {
+            console.error('Failed to remove player from room:', error);
+          } else {
+            console.log('Player removed from room:', playerName);
+            
+            // If host is leaving, transfer host to another player or disband room
+            if (isHostLeaving) {
+              const { data: remainingPlayers } = await supabase
+                .from('room_players')
+                .select('player_name')
+                .eq('room_id', room.id)
+                .order('joined_at', { ascending: true })
+                .limit(1);
+
+              if (remainingPlayers && remainingPlayers.length > 0) {
+                // Transfer host to the first remaining player
+                const newHost = remainingPlayers[0].player_name;
+                await supabase
+                  .from('rooms')
+                  .update({ host_player_name: newHost })
+                  .eq('pin_code', roomPin);
+                console.log('Host transferred to:', newHost);
+              } else {
+                // No players left, deactivate room
+                await supabase
+                  .from('rooms')
+                  .update({ is_active: false })
+                  .eq('pin_code', roomPin);
+                console.log('Room deactivated - no players remaining');
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error removing player from room:', error);
+      }
+    }
+
+    // Clear local state
     setRoomPin(null);
     setIsMultiplayer(false);
     setGameStarted(false);
     setRoomPlayers([]);
     setPlayerName(null);
+    setIsHost(false);
     setGameState({
       players: [],
       roundActive: false,
@@ -595,7 +703,87 @@ const App: React.FC = () => {
   locatorPromiseRef.current = null;
   setLoadingQuote(LOADING_QUOTES[Math.floor(Math.random() * LOADING_QUOTES.length)]);
 
+  // In multiplayer mode, clear the current image from database for new round
+  if (isMultiplayer && roomPin && incrementRound) {
+    try {
+      await supabase
+        .from('rooms')
+        .update({ 
+          current_image_url: null,
+          current_answer_position: null
+        })
+        .eq('pin_code', roomPin);
+      console.log('Cleared current image from database for new round');
+    } catch (error) {
+      console.error('Error clearing current image from database:', error);
+    }
+  }
+
   try {
+    // In multiplayer mode, check if there's already an image for this round
+    if (isMultiplayer && roomPin) {
+      const { data: room } = await supabase
+        .from('rooms')
+        .select('current_image_url, current_answer_position, host_player_name')
+        .eq('pin_code', roomPin)
+        .single();
+
+      if (room?.current_image_url) {
+        console.log('Using shared image from database:', room.current_image_url);
+        setImageUrl(room.current_image_url);
+        
+        if (room.current_answer_position) {
+          const answerPosition = room.current_answer_position as BoundingBox;
+          setGameState(prev => ({ ...prev, answerPosition, roundActive: true }));
+          showStatus("Using shared image... FIND BALL... GO!", 2000);
+          startTimer();
+          setIsLoading(false);
+          setIsTransitioning(false);
+          return;
+        }
+      } else {
+        // No image yet - check if we're the host
+        const isHost = room?.host_player_name === playerName;
+        console.log('Host check:', { host_player_name: room?.host_player_name, playerName, isHost });
+        if (!isHost) {
+          console.log('Not the host, waiting for host to generate image...');
+          showStatus("Waiting for host to generate image...", 2000);
+          // Poll for image every 2 seconds
+          const pollInterval = setInterval(async () => {
+            const { data: updatedRoom } = await supabase
+              .from('rooms')
+              .select('current_image_url, current_answer_position')
+              .eq('pin_code', roomPin)
+              .single();
+            
+            if (updatedRoom?.current_image_url) {
+              clearInterval(pollInterval);
+              console.log('Host generated image, loading:', updatedRoom.current_image_url);
+              setImageUrl(updatedRoom.current_image_url);
+              
+              if (updatedRoom.current_answer_position) {
+                const answerPosition = updatedRoom.current_answer_position as BoundingBox;
+                setGameState(prev => ({ ...prev, answerPosition, roundActive: true }));
+                showStatus("Using shared image... FIND BALL... GO!", 2000);
+                startTimer();
+                setIsLoading(false);
+                setIsTransitioning(false);
+              }
+            }
+          }, 2000);
+          
+          // Clean up polling after 30 seconds
+          setTimeout(() => {
+            clearInterval(pollInterval);
+          }, 30000);
+          
+          return;
+        }
+        // If we're the host, continue to generate image below
+        console.log('Host generating new image for round');
+      }
+    }
+
     // Read the latest savedImages synchronously to avoid stale closures
     const currentSavedImages = savedImages;
     console.log('startNewRound called:', { useNewImage, savedImagesLength: currentSavedImages.length, cachedImage: !!cachedImageRef.current });
@@ -777,6 +965,27 @@ CRITICAL REQUIREMENTS:
       // Save the image URL and detected answer position for future use
       await saveImageUrl(generatedUrl, answerPosition);
 
+      // In multiplayer mode, save the image and answer position to the database
+      if (isMultiplayer && roomPin) {
+        try {
+          const { error } = await supabase
+            .from('rooms')
+            .update({ 
+              current_image_url: generatedUrl,
+              current_answer_position: answerPosition
+            })
+            .eq('pin_code', roomPin);
+          
+          if (error) {
+            console.error('Failed to save image to database:', error);
+          } else {
+            console.log('Saved image and answer position to database for room:', roomPin);
+          }
+        } catch (error) {
+          console.error('Error saving image to database:', error);
+        }
+      }
+
       // Use the detected position
       cachedImageRef.current = { url: generatedUrl, bbox: answerPosition };
       setGameState(prev => ({ ...prev, answerPosition, roundActive: true }));
@@ -812,9 +1021,12 @@ CRITICAL REQUIREMENTS:
       await updateRoomCurrentRound(roomPin, 1);
       await supabase
         .from('rooms')
-        .update({ game_completed: false })
+        .update({ game_completed: false, game_started: false })
         .eq('pin_code', roomPin);
     }
+    
+    // Reset local game started state
+    setGameStarted(false);
     
     // Start the first round
     await startNewRound(false); // Don't increment round since we're starting from 1
@@ -978,6 +1190,59 @@ CRITICAL REQUIREMENTS:
       subscription.unsubscribe();
     };
   }, [isMultiplayer, roomPin, playerName]);
+
+  // Subscribe to room state changes (game started)
+  useEffect(() => {
+    if (!isMultiplayer || !roomPin) return;
+
+    const subscription = supabase
+      .channel(`room_state_${roomPin}`)
+      .on('postgres_changes', 
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'rooms',
+          filter: `pin_code=eq.${roomPin}`
+        }, 
+        (payload) => {
+          console.log('Room state update:', payload);
+          
+          // Handle game started updates
+          if (payload.new?.game_started && !gameStarted && playerName) {
+            // Check if this player is already in the room
+            const isPlayerInRoom = roomPlayers.some(p => p.name === playerName);
+            if (isPlayerInRoom) {
+              console.log('Game started by host, transitioning to game screen');
+              setGameStarted(true);
+              startCountdown();
+            }
+          }
+          
+          // Handle image updates (when host generates image)
+          if (payload.new?.current_image_url && !imageUrl && playerName) {
+            const isPlayerInRoom = roomPlayers.some(p => p.name === playerName);
+            if (isPlayerInRoom) {
+              console.log('Host generated image, loading for non-host player:', payload.new.current_image_url);
+              setImageUrl(payload.new.current_image_url);
+              
+              if (payload.new.current_answer_position) {
+                const answerPosition = payload.new.current_answer_position as BoundingBox;
+                setGameState(prev => ({ ...prev, answerPosition, roundActive: true }));
+                showStatus("Using shared image... FIND BALL... GO!", 2000);
+                startTimer();
+                setIsLoading(false);
+                setIsTransitioning(false);
+              }
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [isMultiplayer, roomPin, gameStarted, playerName, roomPlayers, imageUrl]);
   
   useEffect(() => {
     let quoteInterval: number;
@@ -1157,12 +1422,12 @@ CRITICAL REQUIREMENTS:
 
   // Show waiting room if multiplayer and game hasn't started
   if (isMultiplayer && !gameStarted) {
-    const isHost = roomPlayers.length > 0 && roomPlayers[0]?.name === playerName;
     return (
       <WaitingRoom
         roomPin={roomPin!}
         players={roomPlayers}
         isHost={isHost}
+        hostPlayerName={hostPlayerName}
         onStartGame={startGameplay}
         onLeaveRoom={leaveRoom}
         isMuted={audio.isMuted}

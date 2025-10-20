@@ -58,7 +58,8 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       await onJoinRoom(pin.trim(), playerName.trim());
       // Don't call onJoinGame - let App handle showing waiting room
     } catch (err) {
-      setError('Room not found. Check the PIN and try again.');
+      const errorMessage = err instanceof Error ? err.message : 'Room not found. Check the PIN and try again.';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -148,6 +149,13 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
         {error && (
           <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {/* Info Message for Join Mode */}
+        {mode === 'join' && !error && (
+          <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm">
+            💡 <strong>Note:</strong> You can only join a room before the game starts. If the game has already begun, please wait for the next game or create a new room.
           </div>
         )}
 

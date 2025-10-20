@@ -5,6 +5,7 @@ interface WaitingRoomProps {
   roomPin: string;
   players: Array<{ name: string; joined_at?: string }>;
   isHost: boolean;
+  hostPlayerName: string | null;
   onStartGame: () => void;
   onLeaveRoom: () => void;
   isMuted: boolean;
@@ -18,6 +19,7 @@ const WaitingRoom: React.FC<WaitingRoomProps> = ({
   roomPin,
   players,
   isHost,
+  hostPlayerName,
   onStartGame,
   onLeaveRoom,
   isMuted,
@@ -178,29 +180,32 @@ const WaitingRoom: React.FC<WaitingRoomProps> = ({
                   if (!b.joined_at) return -1;
                   return new Date(b.joined_at).getTime() - new Date(a.joined_at).getTime();
                 })
-                .map((player, index) => (
-                  <div 
-                    key={player.name}
-                    className={`flex items-center justify-between p-3 rounded-lg ${
-                      index === 0 ? 'bg-green-50 border-2 border-green-200' : 'bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-center">
-                      <div className={`w-3 h-3 rounded-full mr-3 ${
-                        index === 0 ? 'bg-green-500' : 'bg-gray-400'
-                      }`} />
-                      <span className="font-semibold text-gray-800">{player.name}</span>
-                      {index === 0 && (
-                        <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-                          Host
-                        </span>
-                      )}
+                .map((player, index) => {
+                  const isPlayerHost = player.name === hostPlayerName;
+                  return (
+                    <div 
+                      key={player.name}
+                      className={`flex items-center justify-between p-3 rounded-lg ${
+                        isPlayerHost ? 'bg-green-50 border-2 border-green-200' : 'bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center">
+                        <div className={`w-3 h-3 rounded-full mr-3 ${
+                          isPlayerHost ? 'bg-green-500' : 'bg-gray-400'
+                        }`} />
+                        <span className="font-semibold text-gray-800">{player.name}</span>
+                        {isPlayerHost && (
+                          <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                            Host
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm text-gray-500">
+                        {timeAgo[player.name] || 'Just joined'}
+                      </span>
                     </div>
-                    <span className="text-sm text-gray-500">
-                      {timeAgo[player.name] || 'Just joined'}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
             </div>
           )}
         </div>
